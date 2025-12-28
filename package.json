@@ -1,0 +1,154 @@
+{
+  "name": "vscord",
+  "displayName": "VSCord",
+  "description": "Real-time coding presence for your GitHub network. See what your friends are working on, right in VS Code.",
+  "version": "1.0.0",
+  "publisher": "vscord",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:vscord-presence",
+    "onCommand:vscord.connectGitHub",
+    "onCommand:vscord.continueAsGuest"
+  ],
+  "main": "./dist/client/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vscord.connectGitHub",
+        "title": "Connect GitHub",
+        "icon": "$(github)"
+      },
+      {
+        "command": "vscord.continueAsGuest",
+        "title": "Continue as Guest",
+        "icon": "$(account)"
+      },
+      {
+        "command": "vscord.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vscord.openSettings",
+        "title": "VSCord Settings",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "vscord.disconnect",
+        "title": "Disconnect",
+        "icon": "$(sign-out)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vscord-sidebar",
+          "title": "VSCord",
+          "icon": "$(pulse)"
+        }
+      ]
+    },
+    "views": {
+      "vscord-sidebar": [
+        {
+          "id": "vscord-presence",
+          "name": "Presence",
+          "icon": "$(account)"
+        },
+        {
+          "id": "vscord-status",
+          "name": "Connection",
+          "icon": "$(plug)"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "vscord-presence",
+        "contents": "Welcome to VSCord!\nConnect with GitHub to see your network's coding activity.\n[Connect GitHub](command:vscord.connectGitHub)\n[Continue as Guest](command:vscord.continueAsGuest)"
+      }
+    ],
+    "configuration": {
+      "title": "VSCord",
+      "properties": {
+        "vscord.visibilityMode": {
+          "type": "string",
+          "enum": [
+            "everyone",
+            "followers",
+            "following",
+            "close-friends",
+            "invisible"
+          ],
+          "default": "everyone",
+          "description": "Control who can see your online status"
+        },
+        "vscord.shareProjectName": {
+          "type": "boolean",
+          "default": true,
+          "description": "Share the name of your current project"
+        },
+        "vscord.shareLanguage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Share the programming language you're using"
+        },
+        "vscord.shareActivity": {
+          "type": "boolean",
+          "default": true,
+          "description": "Share your activity (Coding, Debugging, Idle)"
+        },
+        "vscord.serverUrl": {
+          "type": "string",
+          "default": "wss://vscord.example.com",
+          "description": "WebSocket server URL"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "esbuild src/client/extension.ts --bundle --outfile=dist/client/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "build:server": "esbuild src/server/index.ts --bundle --outfile=dist/server/index.js --format=cjs --platform=node --sourcemap",
+    "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\"",
+    "dev:client": "npm run build:client -- --watch",
+    "dev:server": "npm run build:server -- --watch",
+    "test": "vitest run",
+    "test:unit": "vitest run --dir tests/unit",
+    "test:integration": "vitest run --dir tests/integration",
+    "test:watch": "vitest",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "vscode:prepublish": "npm run build:client -- --minify",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/pg": "^8.10.9",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.10",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vscode/test-electron": "^2.3.8",
+    "concurrently": "^8.2.2",
+    "esbuild": "^0.19.8",
+    "eslint": "^8.55.0",
+    "prettier": "^3.1.0",
+    "testcontainers": "^10.4.0",
+    "typescript": "^5.3.2",
+    "vitest": "^1.0.4"
+  },
+  "dependencies": {
+    "@octokit/rest": "^20.0.2",
+    "ioredis": "^5.3.2",
+    "pg": "^8.11.3",
+    "ws": "^8.14.2"
+  }
+}

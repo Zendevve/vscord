@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+dist/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Build artifacts
+*.vsix
+
+# Database files (if SQLite used for testing)
+*.sqlite
+*.db
