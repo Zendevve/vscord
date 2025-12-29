@@ -20,6 +20,14 @@ export interface UserStatus {
   language: string;
   lastSeen?: number;
   githubId?: number;
+  customStatus?: CustomStatus;  // Phase 2: Rich Status
+}
+
+/** Custom status with emoji and expiration */
+export interface CustomStatus {
+  text: string;          // Max 128 chars
+  emoji?: string;        // Single emoji
+  expiresAt?: number;    // Unix timestamp when status expires
 }
 
 export interface UserPreferences {
@@ -57,7 +65,10 @@ export type MessageType =
   | 'cu'           // Channel update (member status)
   | 'cj'           // Member joined channel
   | 'cl'           // Member left channel
-  | 'cm';          // Channel message
+  | 'cm'           // Channel message
+  // Rich Status (Phase 2)
+  | 'ss'           // Set custom status
+  | 'clr';         // Clear custom status
 
 /** Base message interface */
 export interface BaseMessage {
@@ -112,6 +123,7 @@ export interface DeltaUpdateMessage extends BaseMessage {
   a?: string;            // activity (if changed)
   p?: string;            // project (if changed)
   l?: string;            // language (if changed)
+  cs?: CustomStatus | null;  // custom status (if changed, null = cleared)
 }
 
 /** Server → Client: User Online */
@@ -245,6 +257,23 @@ export interface ChannelChatMessage extends BaseMessage {
 }
 
 // ============================================================================
+// Rich Status Messages (Phase 2)
+// ============================================================================
+
+/** Client → Server: Set Custom Status */
+export interface SetStatusMessage extends BaseMessage {
+  t: 'ss';
+  text: string;
+  emoji?: string;
+  expiresIn?: number;    // Duration in ms (1h, 4h, 8h, 24h, or undefined for never)
+}
+
+/** Client → Server: Clear Custom Status */
+export interface ClearStatusMessage extends BaseMessage {
+  t: 'clr';
+}
+
+// ============================================================================
 // Union Types
 // ============================================================================
 
@@ -257,7 +286,10 @@ export type ClientMessage =
   | CreateChannelMessage
   | JoinChannelMessage
   | LeaveChannelMessage
-  | ChannelChatMessage;
+  | ChannelChatMessage
+  // Rich Status
+  | SetStatusMessage
+  | ClearStatusMessage;
 
 export type ServerMessage =
   | LoginSuccessMessage

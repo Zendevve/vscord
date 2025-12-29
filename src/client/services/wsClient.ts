@@ -208,6 +208,10 @@ export class WsClient {
       if (message.a) existing.activity = message.a as ActivityType;
       if (message.p !== undefined) existing.project = message.p;
       if (message.l !== undefined) existing.language = message.l;
+      // Handle custom status
+      if (message.cs !== undefined) {
+        existing.customStatus = message.cs ?? undefined;
+      }
       this.options.onUserListUpdate(Array.from(this.users.values()));
     }
   }
@@ -423,6 +427,27 @@ export class WsClient {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
     }
+  }
+
+  // ==========================================================================
+  // Rich Status Commands (Phase 2)
+  // ==========================================================================
+
+  /**
+   * Set a custom status with optional emoji and expiration
+   * @param text Status text (max 128 chars)
+   * @param emoji Optional emoji prefix
+   * @param expiresIn Duration in ms (1h=3600000, 4h=14400000, 8h=28800000, 24h=86400000, or undefined for never)
+   */
+  setCustomStatus(text: string, emoji?: string, expiresIn?: number): void {
+    this.sendRaw({ t: 'ss', text: text.slice(0, 128), emoji, expiresIn });
+  }
+
+  /**
+   * Clear custom status
+   */
+  clearCustomStatus(): void {
+    this.sendRaw({ t: 'clr' });
   }
 }
 
