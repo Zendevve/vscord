@@ -43,6 +43,31 @@
         "command": "vscord.disconnect",
         "title": "Disconnect",
         "icon": "$(sign-out)"
+      },
+      {
+        "command": "vscord.createChannel",
+        "title": "Create Channel",
+        "icon": "$(add)"
+      },
+      {
+        "command": "vscord.joinChannel",
+        "title": "Join Channel",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "vscord.leaveChannel",
+        "title": "Leave Channel",
+        "icon": "$(close)"
+      },
+      {
+        "command": "vscord.setStatus",
+        "title": "Set Status",
+        "icon": "$(smiley)"
+      },
+      {
+        "command": "vscord.clearStatus",
+        "title": "Clear Status",
+        "icon": "$(clear-all)"
       }
     ],
     "viewsContainers": {
@@ -58,8 +83,13 @@
       "vscord-sidebar": [
         {
           "id": "vscord-presence",
-          "name": "Presence",
+          "name": "Friends",
           "icon": "$(account)"
+        },
+        {
+          "id": "vscord-channels",
+          "name": "Channels",
+          "icon": "$(organization)"
         },
         {
           "id": "vscord-status",

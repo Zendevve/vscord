@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { WsClient } from './services/wsClient';
 import { ActivityTracker } from './services/activityTracker';
-import { PresenceProvider, ConnectionProvider } from './providers';
+import { PresenceProvider, ConnectionProvider, ChannelProvider } from './providers';
 
 let wsClient: WsClient | null = null;
 let activityTracker: ActivityTracker | null = null;
@@ -18,6 +18,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Create providers
   const presenceProvider = new PresenceProvider();
   const connectionProvider = new ConnectionProvider();
+  const channelProvider = new ChannelProvider();
 
   // Register tree views
   context.subscriptions.push(
@@ -31,6 +32,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.createTreeView('vscord-status', {
       treeDataProvider: connectionProvider,
       showCollapseAll: false,
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.window.createTreeView('vscord-channels', {
+      treeDataProvider: channelProvider,
+      showCollapseAll: true,
     })
   );
 
@@ -58,6 +66,32 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     onError: (error) => {
       vscode.window.showErrorMessage(`VSCord: ${error}`);
+    },
+    // Channel callbacks
+    onChannelSync: (channel) => {
+      channelProvider.updateChannel(channel);
+    },
+    onChannelUpdate: (channelId, username, updates) => {
+      channelProvider.updateMemberInChannel(channelId, username, updates);
+    },
+    onChannelMemberJoin: (channelId, member) => {
+      channelProvider.addMemberToChannel(channelId, member);
+    },
+    onChannelMemberLeave: (channelId, username) => {
+      channelProvider.removeMemberFromChannel(channelId, username);
+    },
+    onChannelCreated: (_channelId, name, inviteCode) => {
+      vscode.window.showInformationMessage(
+        `Channel "${name}" created! Invite code: ${inviteCode}`,
+        'Copy Code'
+      ).then((action) => {
+        if (action === 'Copy Code') {
+          vscode.env.clipboard.writeText(inviteCode);
+        }
+      });
+    },
+    onChannelJoined: (_channelId, name) => {
+      vscode.window.showInformationMessage(`Joined channel "${name}"`);
     },
   });
 
@@ -100,6 +134,100 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('vscord.openSettings', () => {
       vscode.commands.executeCommand('workbench.action.openSettings', 'vscord');
+    })
+  );
+
+  // Channel commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand('vscord.createChannel', async () => {
+      if (!wsClient?.connected) {
+        vscode.window.showWarningMessage('Connect to VSCord first');
+        return;
+      }
+      const name = await vscode.window.showInputBox({
+        prompt: 'Enter channel name',
+        placeHolder: 'My Team',
+        validateInput: (v) => {
+          if (!v || v.length < 3) return 'Name must be at least 3 characters';
+          if (v.length > 30) return 'Name must be at most 30 characters';
+          return null;
+        },
+      });
+      if (name) {
+        wsClient.createChannel(name);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('vscord.joinChannel', async () => {
+      if (!wsClient?.connected) {
+        vscode.window.showWarningMessage('Connect to VSCord first');
+        return;
+      }
+      const code = await vscode.window.showInputBox({
+        prompt: 'Enter invite code',
+        placeHolder: 'ABC123',
+        validateInput: (v) => (!v || v.length !== 6) ? 'Code must be 6 characters' : null,
+      });
+      if (code) {
+        wsClient.joinChannel(code.toUpperCase());
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('vscord.leaveChannel', async (item?: { channelId?: string }) => {
+      if (!wsClient?.connected) return;
+      const channelId = item?.channelId;
+      if (channelId) {
+        wsClient.leaveChannel(channelId);
+        channelProvider.removeChannel(channelId);
+        vscode.window.showInformationMessage('Left channel');
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('vscord.setStatus', async () => {
+      if (!wsClient?.connected) {
+        vscode.window.showWarningMessage('Connect to VSCord first');
+        return;
+      }
+      const text = await vscode.window.showInputBox({
+        prompt: 'Set your status (max 128 chars)',
+        placeHolder: 'In a meeting 📅',
+      });
+      if (text) {
+        // Extract emoji if present at start
+        const emojiMatch = text.match(/^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F?)\s*/u);
+        const emoji = emojiMatch ? emojiMatch[1] : undefined;
+        const statusText = emojiMatch ? text.slice(emojiMatch[0].length) : text;
+
+        const duration = await vscode.window.showQuickPick(
+          ['1 hour', '4 hours', '8 hours', '24 hours', 'Never'],
+          { placeHolder: 'When should this status expire?' }
+        );
+
+        const durationMs: Record<string, number | undefined> = {
+          '1 hour': 3600000,
+          '4 hours': 14400000,
+          '8 hours': 28800000,
+          '24 hours': 86400000,
+          'Never': undefined,
+        };
+
+        wsClient.setCustomStatus(statusText, emoji, durationMs[duration ?? 'Never']);
+        vscode.window.showInformationMessage('Status updated!');
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('vscord.clearStatus', () => {
+      if (!wsClient?.connected) return;
+      wsClient.clearCustomStatus();
+      vscode.window.showInformationMessage('Status cleared');
     })
   );
 
