@@ -130,6 +130,7 @@
     "package": "vsce package"
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "^11.11.0",
     "@types/node": "^20.10.0",
     "@types/pg": "^8.10.9",
     "@types/vscode": "^1.85.0",
