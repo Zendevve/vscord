@@ -46,7 +46,18 @@ export type MessageType =
   | 'loginError'   // Login failed
   | 'statusUpdate' // Client status update
   | 'prefsUpdate'  // Preferences update
-  | 'error';       // General error
+  | 'error'        // General error
+  // Channel messages (Phase 2)
+  | 'cc'           // Create channel
+  | 'ccOk'         // Channel created
+  | 'jc'           // Join channel
+  | 'jcOk'         // Join success
+  | 'lc'           // Leave channel
+  | 'cs'           // Channel sync
+  | 'cu'           // Channel update (member status)
+  | 'cj'           // Member joined channel
+  | 'cl'           // Member left channel
+  | 'cm';          // Channel message
 
 /** Base message interface */
 export interface BaseMessage {
@@ -155,6 +166,85 @@ export interface ErrorMessage extends BaseMessage {
 }
 
 // ============================================================================
+// Channel Messages (Phase 2)
+// ============================================================================
+
+/** Client → Server: Create Channel */
+export interface CreateChannelMessage extends BaseMessage {
+  t: 'cc';
+  name: string;
+}
+
+/** Server → Client: Channel Created */
+export interface ChannelCreatedMessage extends BaseMessage {
+  t: 'ccOk';
+  channelId: string;
+  name: string;
+  inviteCode: string;
+}
+
+/** Client → Server: Join Channel */
+export interface JoinChannelMessage extends BaseMessage {
+  t: 'jc';
+  inviteCode: string;
+}
+
+/** Server → Client: Join Success */
+export interface JoinSuccessMessage extends BaseMessage {
+  t: 'jcOk';
+  channelId: string;
+  name: string;
+}
+
+/** Client → Server: Leave Channel */
+export interface LeaveChannelMessage extends BaseMessage {
+  t: 'lc';
+  channelId: string;
+}
+
+/** Server → Client: Channel Sync (initial member list) */
+export interface ChannelSyncMessage extends BaseMessage {
+  t: 'cs';
+  channelId: string;
+  name: string;
+  members: CompactUser[];
+}
+
+/** Server → Client: Channel Member Update */
+export interface ChannelUpdateMessage extends BaseMessage {
+  t: 'cu';
+  channelId: string;
+  id: string;            // username
+  s?: string;            // status
+  a?: string;            // activity
+  p?: string;            // project
+  l?: string;            // language
+}
+
+/** Server → Client: Member Joined */
+export interface ChannelJoinMessage extends BaseMessage {
+  t: 'cj';
+  channelId: string;
+  member: CompactUser;
+}
+
+/** Server → Client: Member Left */
+export interface ChannelLeaveMessage extends BaseMessage {
+  t: 'cl';
+  channelId: string;
+  id: string;            // username who left
+}
+
+/** Bidirectional: Channel Chat Message */
+export interface ChannelChatMessage extends BaseMessage {
+  t: 'cm';
+  channelId: string;
+  id?: string;           // sender (set by server)
+  content: string;
+  ts?: number;           // timestamp (set by server)
+}
+
+// ============================================================================
 // Union Types
 // ============================================================================
 
@@ -162,7 +252,12 @@ export type ClientMessage =
   | LoginMessage
   | StatusUpdateMessage
   | PrefsUpdateMessage
-  | HeartbeatMessage;
+  | HeartbeatMessage
+  // Channel messages
+  | CreateChannelMessage
+  | JoinChannelMessage
+  | LeaveChannelMessage
+  | ChannelChatMessage;
 
 export type ServerMessage =
   | LoginSuccessMessage
@@ -173,7 +268,15 @@ export type ServerMessage =
   | UserOfflineMessage
   | TokenMessage
   | HeartbeatMessage
-  | ErrorMessage;
+  | ErrorMessage
+  // Channel messages
+  | ChannelCreatedMessage
+  | JoinSuccessMessage
+  | ChannelSyncMessage
+  | ChannelUpdateMessage
+  | ChannelJoinMessage
+  | ChannelLeaveMessage
+  | ChannelChatMessage;
 
 // ============================================================================
 // Database Types
@@ -197,6 +300,27 @@ export interface DbPreferences {
   share_language: boolean;
   share_activity: boolean;
 }
+
+export interface DbChannel {
+  id: string;
+  name: string;
+  owner_id: number;
+  invite_code: string;
+  created_at: number;
+}
+
+export interface DbChannelMember {
+  channel_id: string;
+  user_id: number;
+  username: string;
+  role: 'admin' | 'member';
+  joined_at: number;
+}
+
+// Channel constants
+export const MAX_CHANNEL_MEMBERS = 50;
+export const INVITE_CODE_LENGTH = 6;
+export const INVITE_CODE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 // ============================================================================
 // Constants

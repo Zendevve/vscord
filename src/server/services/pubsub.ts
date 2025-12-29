@@ -21,7 +21,7 @@ interface Subscription {
 }
 
 export class PubSubService {
-  private publisher: Redis;
+  public publisher: Redis;  // Public for channel handler
   private subscriber: Redis;
   private subscriptions: Map<string, Set<Subscription>> = new Map();
   private userSockets: Map<WebSocket, string[]> = new Map();

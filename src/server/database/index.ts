@@ -4,7 +4,8 @@
  */
 
 import pg from 'pg';
-import type { DbUser, DbPreferences, VisibilityMode } from '../../shared/types';
+import type { DbUser, DbPreferences, DbChannel, DbChannelMember, VisibilityMode } from '../../shared/types';
+import { INVITE_CODE_LENGTH, MAX_CHANNEL_MEMBERS } from '../../shared/types';
 
 const { Pool } = pg;
 
@@ -52,9 +53,29 @@ export class DatabaseService {
           created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
         );
 
+        -- Channel tables (Phase 2)
+        CREATE TABLE IF NOT EXISTS channels (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          name VARCHAR(100) NOT NULL,
+          owner_id INTEGER REFERENCES users(github_id),
+          invite_code VARCHAR(10) UNIQUE NOT NULL,
+          created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
+        );
+
+        CREATE TABLE IF NOT EXISTS channel_members (
+          channel_id UUID REFERENCES channels(id) ON DELETE CASCADE,
+          user_id INTEGER REFERENCES users(github_id) ON DELETE CASCADE,
+          username VARCHAR(255) NOT NULL,
+          role VARCHAR(20) DEFAULT 'member',
+          joined_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000,
+          PRIMARY KEY (channel_id, user_id)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
         CREATE INDEX IF NOT EXISTS idx_users_followers ON users USING GIN(followers);
         CREATE INDEX IF NOT EXISTS idx_users_following ON users USING GIN(following);
+        CREATE INDEX IF NOT EXISTS idx_channels_invite ON channels(invite_code);
+        CREATE INDEX IF NOT EXISTS idx_channel_members_user ON channel_members(user_id);
       `);
       console.log('[DB] Schema initialized');
     } finally {
@@ -231,6 +252,153 @@ export class DatabaseService {
     } catch {
       return false; // Username taken
     }
+  }
+
+  // ==========================================================================
+  // Channel Operations (Phase 2)
+  // ==========================================================================
+
+  /**
+   * Generate a random invite code
+   */
+  private generateInviteCode(): string {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Avoid confusing chars
+    let code = '';
+    for (let i = 0; i < INVITE_CODE_LENGTH; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+  }
+
+  /**
+   * Create a new channel
+   */
+  async createChannel(name: string, ownerId: number, ownerUsername: string): Promise<DbChannel> {
+    const inviteCode = this.generateInviteCode();
+    const result = await this.pool.query<DbChannel>(
+      `INSERT INTO channels (name, owner_id, invite_code)
+       VALUES ($1, $2, $3)
+       RETURNING id, name, owner_id, invite_code, created_at`,
+      [name, ownerId, inviteCode]
+    );
+    const channel = result.rows[0] as DbChannel;
+
+    // Add owner as admin member
+    await this.addChannelMember(channel.id, ownerId, ownerUsername, 'admin');
+
+    return channel;
+  }
+
+  /**
+   * Get channel by invite code
+   */
+  async getChannelByInviteCode(inviteCode: string): Promise<DbChannel | null> {
+    const result = await this.pool.query<DbChannel>(
+      'SELECT * FROM channels WHERE invite_code = $1',
+      [inviteCode.toUpperCase()]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * Get channel by ID
+   */
+  async getChannelById(channelId: string): Promise<DbChannel | null> {
+    const result = await this.pool.query<DbChannel>(
+      'SELECT * FROM channels WHERE id = $1',
+      [channelId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * Add member to channel
+   */
+  async addChannelMember(
+    channelId: string,
+    userId: number,
+    username: string,
+    role: 'admin' | 'member' = 'member'
+  ): Promise<boolean> {
+    // Check member count
+    const countResult = await this.pool.query<{ count: string }>(
+      'SELECT COUNT(*) as count FROM channel_members WHERE channel_id = $1',
+      [channelId]
+    );
+    const count = parseInt(countResult.rows[0]?.count ?? '0', 10);
+
+    if (count >= MAX_CHANNEL_MEMBERS) {
+      return false; // Channel full
+    }
+
+    try {
+      await this.pool.query(
+        `INSERT INTO channel_members (channel_id, user_id, username, role)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (channel_id, user_id) DO NOTHING`,
+        [channelId, userId, username, role]
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Remove member from channel
+   */
+  async removeChannelMember(channelId: string, userId: number): Promise<void> {
+    await this.pool.query(
+      'DELETE FROM channel_members WHERE channel_id = $1 AND user_id = $2',
+      [channelId, userId]
+    );
+  }
+
+  /**
+   * Get channel members
+   */
+  async getChannelMembers(channelId: string): Promise<DbChannelMember[]> {
+    const result = await this.pool.query<DbChannelMember>(
+      'SELECT * FROM channel_members WHERE channel_id = $1 ORDER BY joined_at',
+      [channelId]
+    );
+    return result.rows;
+  }
+
+  /**
+   * Get all channels for a user
+   */
+  async getUserChannels(userId: number): Promise<DbChannel[]> {
+    const result = await this.pool.query<DbChannel>(
+      `SELECT c.* FROM channels c
+       INNER JOIN channel_members cm ON c.id = cm.channel_id
+       WHERE cm.user_id = $1
+       ORDER BY c.created_at DESC`,
+      [userId]
+    );
+    return result.rows;
+  }
+
+  /**
+   * Check if user is member of channel
+   */
+  async isChannelMember(channelId: string, userId: number): Promise<boolean> {
+    const result = await this.pool.query(
+      'SELECT 1 FROM channel_members WHERE channel_id = $1 AND user_id = $2',
+      [channelId, userId]
+    );
+    return result.rowCount !== null && result.rowCount > 0;
+  }
+
+  /**
+   * Delete channel (owner only)
+   */
+  async deleteChannel(channelId: string, ownerId: number): Promise<boolean> {
+    const result = await this.pool.query(
+      'DELETE FROM channels WHERE id = $1 AND owner_id = $2',
+      [channelId, ownerId]
+    );
+    return result.rowCount !== null && result.rowCount > 0;
   }
 
   /**
