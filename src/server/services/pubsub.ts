@@ -190,4 +190,64 @@ export class PubSubService {
     await this.subscriber.quit();
     await this.publisher.quit();
   }
+
+  // ==========================================================================
+  // Channel Pub/Sub (Phase 2)
+  // ==========================================================================
+
+  /**
+   * Subscribe to a channel
+   */
+  async subscribeToChannel(ws: WebSocket, channelId: string, viewerId: string): Promise<void> {
+    const channel = `channel:${channelId}`;
+
+    if (!this.subscriptions.has(channel)) {
+      this.subscriptions.set(channel, new Set());
+      await this.subscriber.subscribe(channel);
+    }
+
+    this.subscriptions.get(channel)?.add({ ws, userId: viewerId });
+
+    if (!this.userSockets.has(ws)) {
+      this.userSockets.set(ws, []);
+    }
+    this.userSockets.get(ws)?.push(channel);
+  }
+
+  /**
+   * Unsubscribe from a channel
+   */
+  async unsubscribeFromChannel(ws: WebSocket, channelId: string): Promise<void> {
+    const channel = `channel:${channelId}`;
+    const subs = this.subscriptions.get(channel);
+
+    if (subs) {
+      for (const sub of subs) {
+        if (sub.ws === ws) {
+          subs.delete(sub);
+        }
+      }
+      if (subs.size === 0) {
+        this.subscriptions.delete(channel);
+        await this.subscriber.unsubscribe(channel);
+      }
+    }
+
+    // Remove from socket tracking
+    const channels = this.userSockets.get(ws);
+    if (channels) {
+      const idx = channels.indexOf(channel);
+      if (idx >= 0) {
+        channels.splice(idx, 1);
+      }
+    }
+  }
+
+  /**
+   * Publish a message to a channel
+   */
+  async publishToChannel(channelId: string, message: Record<string, unknown>): Promise<void> {
+    await this.publisher.publish(`channel:${channelId}`, JSON.stringify(message));
+  }
 }
+

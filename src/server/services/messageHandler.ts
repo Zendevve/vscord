@@ -7,8 +7,19 @@ import type { WebSocket } from 'ws';
 import type { DatabaseService } from '../database';
 import type { PubSubService } from './pubsub';
 import type { GitHubService } from './github';
-import type { ClientMessage, StatusUpdateMessage, PrefsUpdateMessage, LoginMessage } from '../../shared/types';
-import { ACTIVITY_PRIORITY } from '../../shared/types';
+import type {
+  ClientMessage,
+  StatusUpdateMessage,
+  PrefsUpdateMessage,
+  LoginMessage,
+  CreateChannelMessage,
+  JoinChannelMessage,
+  LeaveChannelMessage,
+  ChannelChatMessage,
+  SetStatusMessage,
+  CustomStatus,
+} from '../../shared/types';
+import { ACTIVITY_PRIORITY, MAX_CHANNEL_MEMBERS } from '../../shared/types';
 import crypto from 'crypto';
 
 export interface ClientData {
@@ -23,6 +34,7 @@ export interface ClientData {
   followers: number[];
   following: number[];
   resumeToken?: string;
+  customStatus?: CustomStatus;
 }
 
 export class MessageHandler {
@@ -59,6 +71,26 @@ export class MessageHandler {
         break;
       case 'hb':
         ws.send(JSON.stringify({ t: 'hb' }));
+        break;
+      // Channel messages (Phase 2)
+      case 'cc':
+        await this.handleCreateChannel(ws, message);
+        break;
+      case 'jc':
+        await this.handleJoinChannel(ws, message);
+        break;
+      case 'lc':
+        await this.handleLeaveChannel(ws, message);
+        break;
+      case 'cm':
+        await this.handleChannelMessage(ws, message);
+        break;
+      // Rich Status (Phase 2)
+      case 'ss':
+        await this.handleSetStatus(ws, message);
+        break;
+      case 'clr':
+        await this.handleClearStatus(ws);
         break;
       default:
         this.sendError(ws, 'Unknown message type');
@@ -406,4 +438,204 @@ export class MessageHandler {
   getClients(): Map<WebSocket, ClientData> {
     return this.clients;
   }
+
+  // ==========================================================================
+  // Channel Handlers (Phase 2)
+  // ==========================================================================
+
+  /**
+   * Handle channel creation
+   */
+  private async handleCreateChannel(ws: WebSocket, message: CreateChannelMessage): Promise<void> {
+    const client = this.clients.get(ws);
+    if (!client?.githubId) {
+      this.sendError(ws, 'Must be logged in with GitHub to create channels');
+      return;
+    }
+
+    try {
+      const channel = await this.db.createChannel(message.name, client.githubId, client.username);
+
+      // Subscribe creator to channel
+      await this.pubsub.subscribeToChannel(ws, channel.id, client.username);
+
+      // Send success response
+      ws.send(JSON.stringify({
+        t: 'ccOk',
+        channelId: channel.id,
+        name: channel.name,
+        inviteCode: channel.invite_code,
+      }));
+
+      // Send channel sync with initial member (self)
+      ws.send(JSON.stringify({
+        t: 'cs',
+        channelId: channel.id,
+        name: channel.name,
+        members: [{
+          id: client.username,
+          a: client.avatar,
+          s: client.status,
+          act: client.activity,
+          p: client.project,
+          l: client.language,
+        }],
+      }));
+    } catch (error) {
+      this.sendError(ws, 'Failed to create channel');
+    }
+  }
+
+  /**
+   * Handle joining a channel
+   */
+  private async handleJoinChannel(ws: WebSocket, message: JoinChannelMessage): Promise<void> {
+    const client = this.clients.get(ws);
+    if (!client?.githubId) {
+      this.sendError(ws, 'Must be logged in with GitHub to join channels');
+      return;
+    }
+
+    const channel = await this.db.getChannelByInviteCode(message.inviteCode);
+    if (!channel) {
+      this.sendError(ws, 'Invalid invite code');
+      return;
+    }
+
+    const added = await this.db.addChannelMember(channel.id, client.githubId, client.username);
+    if (!added) {
+      this.sendError(ws, 'Channel is full or you are already a member');
+      return;
+    }
+
+    // Subscribe to channel
+    await this.pubsub.subscribeToChannel(ws, channel.id, client.username);
+
+    // Get all members
+    const members = await this.db.getChannelMembers(channel.id);
+    const memberStatuses = members.map(m => {
+      const online = this.getClientByUsername(m.username);
+      return {
+        id: m.username,
+        a: online?.avatar,
+        s: online?.status ?? 'Offline',
+        act: online?.activity ?? 'Idle',
+        p: online?.project ?? '',
+        l: online?.language ?? '',
+      };
+    });
+
+    // Send join success
+    ws.send(JSON.stringify({
+      t: 'jcOk',
+      channelId: channel.id,
+      name: channel.name,
+    }));
+
+    // Send channel sync
+    ws.send(JSON.stringify({
+      t: 'cs',
+      channelId: channel.id,
+      name: channel.name,
+      members: memberStatuses,
+    }));
+
+    // Notify other channel members
+    await this.pubsub.publishToChannel(channel.id, {
+      t: 'cj',
+      channelId: channel.id,
+      member: {
+        id: client.username,
+        a: client.avatar,
+        s: client.status,
+        act: client.activity,
+        p: client.project,
+        l: client.language,
+      },
+    });
+  }
+
+  /**
+   * Handle leaving a channel
+   */
+  private async handleLeaveChannel(ws: WebSocket, message: LeaveChannelMessage): Promise<void> {
+    const client = this.clients.get(ws);
+    if (!client?.githubId) return;
+
+    await this.db.removeChannelMember(message.channelId, client.githubId);
+    await this.pubsub.unsubscribeFromChannel(ws, message.channelId);
+
+    // Notify other members
+    await this.pubsub.publishToChannel(message.channelId, {
+      t: 'cl',
+      channelId: message.channelId,
+      id: client.username,
+    });
+  }
+
+  /**
+   * Handle channel chat message
+   */
+  private async handleChannelMessage(ws: WebSocket, message: ChannelChatMessage): Promise<void> {
+    const client = this.clients.get(ws);
+    if (!client?.githubId) return;
+
+    const isMember = await this.db.isChannelMember(message.channelId, client.githubId);
+    if (!isMember) {
+      this.sendError(ws, 'Not a member of this channel');
+      return;
+    }
+
+    // Broadcast to channel
+    await this.pubsub.publishToChannel(message.channelId, {
+      t: 'cm',
+      channelId: message.channelId,
+      id: client.username,
+      content: message.content,
+      ts: Date.now(),
+    });
+  }
+
+  // ==========================================================================
+  // Rich Status Handlers (Phase 2)
+  // ==========================================================================
+
+  /**
+   * Handle set custom status
+   */
+  private async handleSetStatus(ws: WebSocket, message: SetStatusMessage): Promise<void> {
+    const client = this.clients.get(ws);
+    if (!client) return;
+
+    const customStatus: CustomStatus = {
+      text: message.text.slice(0, 128),
+      emoji: message.emoji,
+      expiresAt: message.expiresIn ? Date.now() + message.expiresIn : undefined,
+    };
+
+    client.customStatus = customStatus;
+
+    // Publish delta update with custom status
+    await this.pubsub.publishDelta(client.username, {
+      id: client.username,
+      cs: customStatus,
+    });
+  }
+
+  /**
+   * Handle clear custom status
+   */
+  private async handleClearStatus(ws: WebSocket): Promise<void> {
+    const client = this.clients.get(ws);
+    if (!client) return;
+
+    client.customStatus = undefined;
+
+    // Publish delta update with cleared status
+    await this.pubsub.publishDelta(client.username, {
+      id: client.username,
+      cs: null,
+    });
+  }
 }
+
