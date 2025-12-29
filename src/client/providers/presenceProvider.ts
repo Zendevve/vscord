@@ -182,9 +182,190 @@ class ConnectionItem extends vscode.TreeItem {
       connected ? 'plug' : 'debug-disconnect',
       new vscode.ThemeColor(connected ? 'charts.green' : 'charts.red')
     );
-    this.command = connected ? undefined : {
-      command: 'vscord.connectGitHub',
-      title: 'Connect GitHub',
+    if (!connected) {
+      this.command = {
+        command: 'vscord.connectGitHub',
+        title: 'Connect GitHub',
+      };
+    }
+  }
+}
+
+// ============================================================================
+// Channel Provider (Phase 2)
+// ============================================================================
+
+export interface ChannelData {
+  id: string;
+  name: string;
+  members: UserStatus[];
+  inviteCode?: string;
+}
+
+export class ChannelProvider implements vscode.TreeDataProvider<ChannelTreeItem> {
+  private _onDidChangeTreeData = new vscode.EventEmitter<ChannelTreeItem | undefined>();
+  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
+  private channels: Map<string, ChannelData> = new Map();
+
+  /**
+   * Add or update a channel
+   */
+  updateChannel(channel: ChannelData): void {
+    this.channels.set(channel.id, channel);
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /**
+   * Update a member's status in a channel
+   */
+  updateMemberInChannel(channelId: string, username: string, updates: Partial<UserStatus>): void {
+    const channel = this.channels.get(channelId);
+    if (!channel) return;
+
+    const member = channel.members.find(m => m.username === username);
+    if (member) {
+      Object.assign(member, updates);
+      this._onDidChangeTreeData.fire(undefined);
+    }
+  }
+
+  /**
+   * Add member to channel
+   */
+  addMemberToChannel(channelId: string, member: UserStatus): void {
+    const channel = this.channels.get(channelId);
+    if (!channel) return;
+
+    const exists = channel.members.find(m => m.username === member.username);
+    if (!exists) {
+      channel.members.push(member);
+      this._onDidChangeTreeData.fire(undefined);
+    }
+  }
+
+  /**
+   * Remove member from channel
+   */
+  removeMemberFromChannel(channelId: string, username: string): void {
+    const channel = this.channels.get(channelId);
+    if (!channel) return;
+
+    channel.members = channel.members.filter(m => m.username !== username);
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /**
+   * Remove a channel
+   */
+  removeChannel(channelId: string): void {
+    this.channels.delete(channelId);
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /**
+   * Get channel by ID
+   */
+  getChannel(channelId: string): ChannelData | undefined {
+    return this.channels.get(channelId);
+  }
+
+  getTreeItem(element: ChannelTreeItem): vscode.TreeItem {
+    return element;
+  }
+
+  getChildren(element?: ChannelTreeItem): ChannelTreeItem[] {
+    if (!element) {
+      // Root level: show channels
+      if (this.channels.size === 0) {
+        return [new NoChannelsItem()];
+      }
+      return Array.from(this.channels.values()).map(ch => new ChannelItem(ch));
+    }
+
+    if (element instanceof ChannelItem) {
+      // Channel children: show members
+      const sorted = [...element.channel.members].sort((a, b) => {
+        const statusOrder = { Online: 0, Away: 1, Offline: 2, Invisible: 3 };
+        const aOrder = statusOrder[a.status] ?? 4;
+        const bOrder = statusOrder[b.status] ?? 4;
+        return aOrder - bOrder;
+      });
+      return sorted.map(m => new ChannelMemberItem(m, element.channel.id));
+    }
+
+    return [];
+  }
+
+  refresh(): void {
+    this._onDidChangeTreeData.fire(undefined);
+  }
+}
+
+type ChannelTreeItem = ChannelItem | ChannelMemberItem | NoChannelsItem;
+
+class ChannelItem extends vscode.TreeItem {
+  constructor(public readonly channel: ChannelData) {
+    super(channel.name, vscode.TreeItemCollapsibleState.Expanded);
+
+    const online = channel.members.filter(m => m.status === 'Online' || m.status === 'Away').length;
+    this.description = `${online}/${channel.members.length} online`;
+    this.iconPath = new vscode.ThemeIcon('organization', new vscode.ThemeColor('charts.blue'));
+    this.contextValue = 'channel';
+
+    // Tooltip with invite code
+    const md = new vscode.MarkdownString();
+    md.appendMarkdown(`### ${channel.name}\n\n`);
+    md.appendMarkdown(`**Members:** ${channel.members.length}\n\n`);
+    if (channel.inviteCode) {
+      md.appendMarkdown(`**Invite Code:** \`${channel.inviteCode}\`\n\n`);
+    }
+    this.tooltip = md;
+  }
+}
+
+class ChannelMemberItem extends vscode.TreeItem {
+  constructor(
+    public readonly member: UserStatus,
+    public readonly channelId: string
+  ) {
+    super(member.username, vscode.TreeItemCollapsibleState.None);
+
+    const parts: string[] = [];
+    if (member.activity !== 'Idle' && member.activity !== 'Hidden') {
+      parts.push(member.activity);
+    }
+    if (member.project) {
+      parts.push(member.project);
+    }
+    this.description = parts.join(' • ');
+
+    // Status icon
+    if (member.status === 'Offline') {
+      this.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('charts.gray'));
+    } else if (member.status === 'Away') {
+      this.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.yellow'));
+    } else if (member.activity === 'Debugging') {
+      this.iconPath = new vscode.ThemeIcon('debug', new vscode.ThemeColor('charts.red'));
+    } else if (member.activity === 'Coding') {
+      this.iconPath = new vscode.ThemeIcon('code', new vscode.ThemeColor('charts.green'));
+    } else {
+      this.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'));
+    }
+
+    this.contextValue = 'channelMember';
+  }
+}
+
+class NoChannelsItem extends vscode.TreeItem {
+  constructor() {
+    super('No channels yet', vscode.TreeItemCollapsibleState.None);
+    this.description = 'Create or join one!';
+    this.iconPath = new vscode.ThemeIcon('add');
+    this.command = {
+      command: 'vscord.createChannel',
+      title: 'Create Channel',
     };
   }
 }
+

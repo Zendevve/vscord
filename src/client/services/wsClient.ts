@@ -3,7 +3,6 @@
  * Manages connection to VSCord server with reconnection and delta updates
  */
 
-import * as vscode from 'vscode';
 import WebSocket from 'ws';
 import type {
   ServerMessage,
@@ -16,14 +15,30 @@ import type {
   UserOnlineMessage,
   UserOfflineMessage,
   LoginSuccessMessage,
+  ChannelSyncMessage,
+  ChannelUpdateMessage,
+  ChannelJoinMessage,
+  ChannelLeaveMessage,
+  ChannelCreatedMessage,
+  JoinSuccessMessage,
+  ChannelChatMessage,
 } from '../../shared/types';
 import { HEARTBEAT_INTERVAL_MS } from '../../shared/types';
+import type { ChannelData } from '../providers';
 
 export interface WsClientOptions {
   serverUrl: string;
   onUserListUpdate: (users: UserStatus[]) => void;
   onConnectionChange: (connected: boolean) => void;
   onError: (error: string) => void;
+  // Channel callbacks
+  onChannelSync?: (channel: ChannelData) => void;
+  onChannelUpdate?: (channelId: string, username: string, updates: Partial<UserStatus>) => void;
+  onChannelMemberJoin?: (channelId: string, member: UserStatus) => void;
+  onChannelMemberLeave?: (channelId: string, username: string) => void;
+  onChannelCreated?: (channelId: string, name: string, inviteCode: string) => void;
+  onChannelJoined?: (channelId: string, name: string) => void;
+  onChannelMessage?: (channelId: string, sender: string, content: string, ts: number) => void;
 }
 
 export class WsClient {
@@ -130,6 +145,28 @@ export class WsClient {
         break;
       case 'error':
         this.options.onError(message.error);
+        break;
+      // Channel messages
+      case 'ccOk':
+        this.handleChannelCreated(message as ChannelCreatedMessage);
+        break;
+      case 'jcOk':
+        this.handleJoinSuccess(message as JoinSuccessMessage);
+        break;
+      case 'cs':
+        this.handleChannelSync(message as ChannelSyncMessage);
+        break;
+      case 'cu':
+        this.handleChannelUpdate(message as ChannelUpdateMessage);
+        break;
+      case 'cj':
+        this.handleChannelJoin(message as ChannelJoinMessage);
+        break;
+      case 'cl':
+        this.handleChannelLeave(message as ChannelLeaveMessage);
+        break;
+      case 'cm':
+        this.handleChannelChat(message as ChannelChatMessage);
         break;
     }
   }
@@ -287,4 +324,105 @@ export class WsClient {
   get connected(): boolean {
     return this.isConnected;
   }
+
+  // ==========================================================================
+  // Channel Handlers (Phase 2)
+  // ==========================================================================
+
+  private handleChannelCreated(message: ChannelCreatedMessage): void {
+    this.options.onChannelCreated?.(message.channelId, message.name, message.inviteCode);
+  }
+
+  private handleJoinSuccess(message: JoinSuccessMessage): void {
+    this.options.onChannelJoined?.(message.channelId, message.name);
+  }
+
+  private handleChannelSync(message: ChannelSyncMessage): void {
+    const members: UserStatus[] = message.members.map(m => ({
+      username: m.id,
+      avatar: m.a,
+      status: (m.s as StatusType) ?? 'Offline',
+      activity: (m.act as ActivityType) ?? 'Idle',
+      project: m.p ?? '',
+      language: m.l ?? '',
+    }));
+    this.options.onChannelSync?.({
+      id: message.channelId,
+      name: message.name,
+      members,
+    });
+  }
+
+  private handleChannelUpdate(message: ChannelUpdateMessage): void {
+    this.options.onChannelUpdate?.(message.channelId, message.id, {
+      status: message.s as StatusType,
+      activity: message.a as ActivityType,
+      project: message.p,
+      language: message.l,
+    });
+  }
+
+  private handleChannelJoin(message: ChannelJoinMessage): void {
+    const member: UserStatus = {
+      username: message.member.id,
+      avatar: message.member.a,
+      status: (message.member.s as StatusType) ?? 'Online',
+      activity: (message.member.act as ActivityType) ?? 'Idle',
+      project: message.member.p ?? '',
+      language: message.member.l ?? '',
+    };
+    this.options.onChannelMemberJoin?.(message.channelId, member);
+  }
+
+  private handleChannelLeave(message: ChannelLeaveMessage): void {
+    this.options.onChannelMemberLeave?.(message.channelId, message.id);
+  }
+
+  private handleChannelChat(message: ChannelChatMessage): void {
+    if (message.id && message.ts) {
+      this.options.onChannelMessage?.(message.channelId, message.id, message.content, message.ts);
+    }
+  }
+
+  // ==========================================================================
+  // Channel Commands
+  // ==========================================================================
+
+  /**
+   * Create a new channel
+   */
+  createChannel(name: string): void {
+    this.sendRaw({ t: 'cc', name });
+  }
+
+  /**
+   * Join a channel by invite code
+   */
+  joinChannel(inviteCode: string): void {
+    this.sendRaw({ t: 'jc', inviteCode });
+  }
+
+  /**
+   * Leave a channel
+   */
+  leaveChannel(channelId: string): void {
+    this.sendRaw({ t: 'lc', channelId });
+  }
+
+  /**
+   * Send a message to a channel
+   */
+  sendChannelMessage(channelId: string, content: string): void {
+    this.sendRaw({ t: 'cm', channelId, content });
+  }
+
+  /**
+   * Send raw message (for channel commands)
+   */
+  private sendRaw(message: Record<string, unknown>): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(message));
+    }
+  }
 }
+

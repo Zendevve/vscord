@@ -1,1 +1,1 @@
-export { PresenceProvider, ConnectionProvider } from './presenceProvider';
+export { PresenceProvider, ConnectionProvider, ChannelProvider, type ChannelData } from './presenceProvider';
