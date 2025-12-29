@@ -68,6 +68,11 @@
         "command": "vscord.clearStatus",
         "title": "Clear Status",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "vscord.openAnalytics",
+        "title": "Open Analytics Dashboard",
+        "icon": "$(graph)"
       }
     ],
     "viewsContainers": {
@@ -138,6 +143,11 @@
           "type": "string",
           "default": "wss://vscord.example.com",
           "description": "WebSocket server URL"
+        },
+        "vscord.analyticsEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Track local coding activity for analytics dashboard"
         }
       }
     }

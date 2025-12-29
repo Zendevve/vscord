@@ -6,10 +6,13 @@
 import * as vscode from 'vscode';
 import { WsClient } from './services/wsClient';
 import { ActivityTracker } from './services/activityTracker';
+import { AnalyticsService, AnalyticsDashboard } from './services';
 import { PresenceProvider, ConnectionProvider, ChannelProvider } from './providers';
 
 let wsClient: WsClient | null = null;
 let activityTracker: ActivityTracker | null = null;
+let analyticsService: AnalyticsService | null = null;
+let analyticsDashboard: AnalyticsDashboard | null = null;
 let statusBarItem: vscode.StatusBarItem | null = null;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -100,7 +103,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (wsClient?.connected) {
       wsClient.sendStatusUpdate(state.status, state.activity, state.project, state.language);
     }
+    // Also update analytics
+    analyticsService?.updateActivity(state.project, state.language);
   });
+
+  // Initialize analytics
+  analyticsService = new AnalyticsService(context);
+  await analyticsService.initialize();
+  analyticsDashboard = new AnalyticsDashboard(analyticsService);
 
   // Register commands
   context.subscriptions.push(
@@ -128,6 +138,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('vscord.refresh', () => {
       presenceProvider.refresh();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('vscord.openAnalytics', () => {
+      analyticsDashboard?.show();
     })
   );
 
